@@ -37,9 +37,9 @@ jobs:
           chmod +x mvnw
           ./mvnw --batch-mode clean verify
 
-      - name: Prepare Deployment Directory
+       - name: Prepare Deployment Directory
         run: |
-          mkdir -p "$HOME/spring-demo"
+          mkdir -p /home/akshay/spring-demo
 
       - name: Stop Old Application
         run: |
@@ -67,16 +67,17 @@ jobs:
 
       - name: Copy New Application
         run: |
-          APP_DIR="$HOME/spring-demo"
+          set -e
           JAR_FILE=$(find target -maxdepth 1 -type f \
             -name '*.jar' ! -name '*.original' -print -quit)
 
           if [ -z "$JAR_FILE" ]; then
-            echo "No executable JAR found in target/"
+            echo "ERROR: No executable JAR found"
             exit 1
           fi
 
-          cp "$JAR_FILE" "$APP_DIR/app.jar"
+          install -m 0644 "$JAR_FILE" /home/akshay/spring-demo/app.jar
+          echo "New JAR copied successfully"
 
       - name: Start Application
         run: |
@@ -84,19 +85,29 @@ jobs:
           nohup java -jar app.jar --server.port=8081 > app.log 2>&1 &
           echo $! > app.pid
 
+       
+
       - name: Verify Deployment
         run: |
-          for i in $(seq 1 15); do
+          for i in $(seq 1 90); do
             if curl --fail --silent \
+              --max-time 5 \
               http://localhost:8081/hello; then
-              echo "Deployment successful"
+              echo
+              echo "SUCCESS: Spring Boot deployment verified"
               exit 0
             fi
+
+            echo "Waiting for application: $i/90"
             sleep 2
           done
 
-          echo "Application did not respond successfully"
-          cat "$HOME/spring-demo/app.log"
+          echo "ERROR: Application did not become ready"
+          sudo -n /usr/bin/systemctl is-active spring-demo || true
+          sudo -n /usr/bin/journalctl -u spring-demo -n 50 --no-pager || true
           exit 1
-
-
+        - name: Restart Spring Boot Service
+        run: |
+          set -e
+          sudo -n /usr/bin/systemctl restart spring-demo
+          echo "Waiting for Spring Boot to start..."
