@@ -3,8 +3,10 @@ name: Deploy Spring Boot to Ubuntu
 
 on:
   pull_request:
-    branches: [main]
-    types: [closed]
+    branches:
+      - main
+    types:
+      - closed
   workflow_dispatch:
 
 permissions:
@@ -12,21 +14,17 @@ permissions:
 
 jobs:
   deploy:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.merged == true)
-
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: self-hosted
 
     steps:
       - name: Checkout Main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -37,33 +35,9 @@ jobs:
           chmod +x mvnw
           ./mvnw --batch-mode clean verify
 
-       - name: Prepare Deployment Directory
+      - name: Prepare Deployment Directory
         run: |
           mkdir -p /home/akshay/spring-demo
-
-      - name: Stop Old Application
-        run: |
-          APP_DIR="$HOME/spring-demo"
-          PID_FILE="$APP_DIR/app.pid"
-
-          if [ -f "$PID_FILE" ]; then
-            PID=$(cat "$PID_FILE")
-
-            if kill -0 "$PID" 2>/dev/null; then
-              kill "$PID"
-              for i in $(seq 1 10); do
-                kill -0 "$PID" 2>/dev/null || break
-                sleep 1
-              done
-
-              if kill -0 "$PID" 2>/dev/null; then
-                echo "Old application did not stop"
-                exit 1
-              fi
-            fi
-
-            rm -f "$PID_FILE"
-          fi
 
       - name: Copy New Application
         run: |
@@ -77,37 +51,28 @@ jobs:
           fi
 
           install -m 0644 "$JAR_FILE" /home/akshay/spring-demo/app.jar
-          echo "New JAR copied successfully"
 
-      - name: Start Application
+      - name: Restart Spring Boot Service
         run: |
-          cd "$HOME/spring-demo"
-          nohup java -jar app.jar --server.port=8081 > app.log 2>&1 &
-          echo $! > app.pid
-
-       
+          set -e
+          sudo -n /usr/bin/systemctl restart spring-demo
+          sudo -n /usr/bin/systemctl is-active spring-demo
 
       - name: Verify Deployment
         run: |
-          for i in $(seq 1 90); do
+          for i in $(seq 1 150); do
             if curl --fail --silent \
-              --max-time 5 \
+              --connect-timeout 1 --max-time 3 \
               http://localhost:8081/hello; then
               echo
               echo "SUCCESS: Spring Boot deployment verified"
               exit 0
             fi
 
-            echo "Waiting for application: $i/90"
-            sleep 2
+            echo "Waiting for Spring Boot startup: $i/150"
+            sleep 4
           done
 
-          echo "ERROR: Application did not become ready"
+          echo "ERROR: Spring Boot did not become ready"
           sudo -n /usr/bin/systemctl is-active spring-demo || true
-          sudo -n /usr/bin/journalctl -u spring-demo -n 50 --no-pager || true
           exit 1
-        - name: Restart Spring Boot Service
-        run: |
-          set -e
-          sudo -n /usr/bin/systemctl restart spring-demo
-          echo "Waiting for Spring Boot to start..."
